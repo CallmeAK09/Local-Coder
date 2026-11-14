@@ -287,7 +287,7 @@ Local Coder/
 
 ## 📜 License
 
-Distributed under the **MIT License**. See `LICENSE` for details.
+Distributed under the **[MIT License](LICENSE)**. See the LICENSE file for details.
 
 <p align="center">
   <b>LOCAL CODER</b> — Engineered for offline-first developers.
