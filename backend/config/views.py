@@ -1,18 +1,110 @@
 import urllib.request
 import urllib.parse
+import os
+import sys
+import json
 from pathlib import Path
 from django.conf import settings
-from django.http import HttpResponse, Http404
+from django.http import HttpResponse, FileResponse, Http404, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from .lifecycle import record_heartbeat, record_client_leave, terminate_server, sync_pwa_launchers
+
+DIST_DIR = settings.BASE_DIR.parent / 'frontend' / 'dist'
+
+@csrf_exempt
+def server_heartbeat_view(request):
+    """
+    Heartbeat ping from active browser tabs.
+    Maintains server uptime while tab is open.
+    """
+    session_id = request.GET.get('session_id') or ''
+    if not session_id and request.body:
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            session_id = data.get('session_id', '')
+        except Exception:
+            pass
+    record_heartbeat(session_id)
+    return JsonResponse({"status": "alive", "session_id": session_id})
+
+@csrf_exempt
+def server_client_leave_view(request):
+    """
+    Called via navigator.sendBeacon when a tab or PWA window closes.
+    Triggers auto-shutdown if all tabs are closed.
+    """
+    session_id = request.GET.get('session_id') or ''
+    if not session_id and request.body:
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            session_id = data.get('session_id', '')
+        except Exception:
+            pass
+    record_client_leave(session_id)
+    return JsonResponse({"status": "leave_recorded"})
+
+@csrf_exempt
+def pwa_sync_view(request):
+    """
+    Hooks the installed Chrome PWA desktop file to `run.sh --pwa`.
+    """
+    result = sync_pwa_launchers()
+    return JsonResponse(result)
+
+@csrf_exempt
+def server_stop_view(request):
+    """
+    Shuts down the backend server process gracefully.
+    Allows quitting directly from the frontend or desktop actions without touching a terminal.
+    """
+    if request.method == 'POST':
+        import threading
+        threading.Thread(target=terminate_server, daemon=True).start()
+        return JsonResponse({"success": True, "message": "Local Compiler server is shutting down."})
+    return JsonResponse({"error": "Method not allowed"}, status=405)
+
+
 
 def index_view(request):
-    dist_index = settings.BASE_DIR.parent / 'frontend' / 'dist' / 'index.html'
+    dist_index = DIST_DIR / 'index.html'
     if dist_index.exists():
-        return HttpResponse(dist_index.read_text(encoding='utf-8'), content_type='text/html')
+        resp = HttpResponse(dist_index.read_text(encoding='utf-8'), content_type='text/html; charset=utf-8')
+        resp['Cache-Control'] = 'no-cache, must-revalidate'
+        return resp
     return HttpResponse(
         "<h1>LOCAL CODER Backend is Running!</h1>"
         "<p>Frontend is running via Vite at <a href='http://localhost:5173'>http://localhost:5173</a> or run <code>npm run build</code>.</p>",
         content_type='text/html'
     )
+
+def pwa_or_spa_serve(request, path=''):
+    """
+    Serves PWA manifest, service workers, static root icons, or falls back to
+    index_view for SPA routing. Ensures correct MIME types and Service-Worker-Allowed header.
+    """
+    clean_path = (path or '').strip().lstrip('/\\')
+    if clean_path:
+        target = (DIST_DIR / clean_path).resolve()
+        try:
+            target.relative_to(DIST_DIR)
+        except ValueError:
+            raise Http404("Invalid file path.")
+
+        if target.exists() and target.is_file():
+            import mimetypes
+            content_type, _ = mimetypes.guess_type(target.name)
+            if target.name == 'manifest.json' or target.name.endswith('.webmanifest'):
+                content_type = 'application/manifest+json'
+            elif target.name.endswith('.js') or target.name == 'sw.js':
+                content_type = 'application/javascript'
+
+            response = FileResponse(open(target, 'rb'), content_type=content_type)
+            if target.name in ('sw.js', 'registerSW.js'):
+                response['Service-Worker-Allowed'] = '/'
+                response['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            return response
+
+    return index_view(request)
 
 def browser_proxy_view(request):
     """
