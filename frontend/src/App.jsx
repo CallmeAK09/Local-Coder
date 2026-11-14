@@ -9,6 +9,7 @@ import DependencyModal from './components/DependencyModal';
 import SettingsModal from './components/SettingsModal';
 import NewFileModal from './components/NewFileModal';
 import NewFolderModal from './components/NewFolderModal';
+import CustomDialogModal from './components/CustomDialogModal';
 
 import {
   fetchWorkspaceTree,
@@ -21,7 +22,8 @@ import {
   stopExecution,
   fetchExecutionHistory,
   clearExecutionHistory,
-  checkDependencies
+  checkDependencies,
+  stopServer
 } from './services/api';
 
 const STARTER_TEMPLATES = {
@@ -117,12 +119,163 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [outputWidth, setOutputWidth] = useState(420);
   const [previewWidth, setPreviewWidth] = useState(480);
+  const [serverStopped, setServerStopped] = useState(false);
+
+  // Custom Universal Dialog Modal State
+  const [dialogState, setDialogState] = useState({
+    isOpen: false,
+    type: 'alert', // 'alert' | 'confirm' | 'prompt'
+    title: '',
+    message: '',
+    defaultValue: '',
+    placeholder: '',
+    confirmText: 'OK',
+    cancelText: 'Cancel',
+    variant: 'primary',
+    resolve: null
+  });
+
+  const showAlert = useCallback((message, title = 'Notification', variant = 'primary') => {
+    return new Promise((resolve) => {
+      setDialogState({
+        isOpen: true,
+        type: 'alert',
+        title,
+        message,
+        defaultValue: '',
+        placeholder: '',
+        confirmText: 'OK',
+        cancelText: 'Cancel',
+        variant,
+        resolve
+      });
+    });
+  }, []);
+
+  const showConfirm = useCallback((message, title = 'Confirm Action', options = {}) => {
+    return new Promise((resolve) => {
+      setDialogState({
+        isOpen: true,
+        type: 'confirm',
+        title,
+        message,
+        defaultValue: '',
+        placeholder: '',
+        confirmText: options.confirmText || 'Confirm',
+        cancelText: options.cancelText || 'Cancel',
+        variant: options.variant || 'primary',
+        resolve
+      });
+    });
+  }, []);
+
+  const showPrompt = useCallback((message, defaultValue = '', title = 'Input Required', options = {}) => {
+    return new Promise((resolve) => {
+      setDialogState({
+        isOpen: true,
+        type: 'prompt',
+        title,
+        message,
+        defaultValue,
+        placeholder: options.placeholder || '',
+        confirmText: options.confirmText || 'OK',
+        cancelText: options.cancelText || 'Cancel',
+        variant: options.variant || 'primary',
+        resolve
+      });
+    });
+  }, []);
+
+  const handleDialogConfirm = (val) => {
+    if (dialogState.resolve) {
+      if (dialogState.type === 'prompt') {
+        dialogState.resolve(val);
+      } else if (dialogState.type === 'confirm') {
+        dialogState.resolve(true);
+      } else {
+        dialogState.resolve(true);
+      }
+    }
+    setDialogState(prev => ({ ...prev, isOpen: false, resolve: null }));
+  };
+
+  const handleDialogCancel = () => {
+    if (dialogState.resolve) {
+      if (dialogState.type === 'prompt') {
+        dialogState.resolve(null);
+      } else {
+        dialogState.resolve(false);
+      }
+    }
+    setDialogState(prev => ({ ...prev, isOpen: false, resolve: null }));
+  };
+
+  const handleStopServer = async () => {
+    const confirmed = await showConfirm(
+      "Shut down the Local Compiler background server? This will release port 8000.",
+      "Shut Down Server",
+      { variant: "danger", confirmText: "Shut Down" }
+    );
+    if (confirmed) {
+      try {
+        await stopServer();
+      } catch (e) {
+        // Server will terminate and close socket
+      }
+      setServerStopped(true);
+    }
+  };
 
   // Resizing refs
   const isResizingSidebar = useRef(false);
   const isResizingOutput = useRef(false);
   const isResizingPreview = useRef(false);
   const isResizingBrowserReader = useRef(false);
+
+  // Session ID for tab lifecycle tracking
+  const sessionId = useRef(
+    sessionStorage.getItem('pwa_session_id') ||
+    Math.random().toString(36).substring(2) + Date.now().toString(36)
+  ).current;
+
+  // Manage Heartbeat and Auto-Shutdown on tab/window close
+  useEffect(() => {
+    sessionStorage.setItem('pwa_session_id', sessionId);
+
+    // Initial heartbeat & sync PWA desktop launcher
+    fetch(`/api/server/heartbeat/?session_id=${sessionId}`, { method: 'POST' }).catch(() => {});
+    fetch('/api/pwa/sync/', { method: 'POST' }).catch(() => {});
+
+    // Periodic heartbeat every 4s
+    const heartbeatInterval = setInterval(() => {
+      fetch(`/api/server/heartbeat/?session_id=${sessionId}`, { method: 'POST' }).catch(() => {});
+    }, 4000);
+
+    // Sync PWA launcher when user installs app from browser
+    const handleAppInstalled = () => {
+      fetch('/api/pwa/sync/', { method: 'POST' }).catch(() => {});
+    };
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    // Send leave beacon on tab close / window unload
+    const handleLeave = () => {
+      const url = `/api/server/client-leave/?session_id=${sessionId}`;
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url);
+      } else {
+        fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+      }
+    };
+    window.addEventListener('beforeunload', handleLeave);
+    window.addEventListener('pagehide', handleLeave);
+
+    return () => {
+      clearInterval(heartbeatInterval);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+      window.removeEventListener('beforeunload', handleLeave);
+      window.removeEventListener('pagehide', handleLeave);
+    };
+  }, [sessionId]);
 
   // Apply theme to DOM
   useEffect(() => {
@@ -247,15 +400,20 @@ export default function App() {
         setIsOutputCollapsed(false);
       }
     } catch (err) {
-      alert(`Could not open file: ${err.message}`);
+      showAlert(`Could not open file: ${err.message}`, 'File Open Error', 'danger');
     }
   };
 
   // Close Tab
-  const handleCloseTab = (path) => {
+  const handleCloseTab = async (path) => {
     const tabToClose = tabs.find(t => t.path === path);
     if (tabToClose?.isDirty) {
-      if (!window.confirm(`File "${tabToClose.name}" has unsaved changes. Close anyway?`)) {
+      const confirmed = await showConfirm(
+        `File "${tabToClose.name}" has unsaved changes. Close anyway?`,
+        'Unsaved Changes',
+        { variant: 'warning', confirmText: 'Close Without Saving' }
+      );
+      if (!confirmed) {
         return;
       }
     }
@@ -294,14 +452,14 @@ export default function App() {
         setPreviewRefreshTrigger(k => k + 1);
       }
     } catch (err) {
-      alert(`Save failed: ${err.message}`);
+      showAlert(`Save failed: ${err.message}`, 'Save Error', 'danger');
     }
   };
 
   // Run Active File (Auto-saves file immediately before execution)
   const handleRun = async (overrideStdin = null) => {
     if (!activeTab) {
-      alert('Please select or create a file to execute.');
+      showAlert('Please select or create a file to execute.', 'No File Selected', 'warning');
       return;
     }
 
@@ -431,7 +589,7 @@ export default function App() {
         extension: ext 
       });
     } catch (err) {
-      alert(`Error creating file: ${err.message}`);
+      showAlert(`Error creating file: ${err.message}`, 'File Creation Error', 'danger');
     }
   };
 
@@ -441,25 +599,31 @@ export default function App() {
       await createFolder(fullPath);
       await loadWorkspace();
     } catch (err) {
-      alert(`Error creating folder: ${err.message}`);
+      showAlert(`Error creating folder: ${err.message}`, 'Folder Creation Error', 'danger');
     }
   };
 
   // Rename
   const handleRenameItem = async (oldPath) => {
     const currentName = oldPath.split('/').pop();
-    const newName = prompt(`Enter new name for "${currentName}":`, currentName);
-    if (!newName || newName.trim() === currentName) return;
+    const newName = await showPrompt(
+      `Enter new name for "${currentName}":`,
+      currentName,
+      'Rename Item',
+      { confirmText: 'Rename', placeholder: 'Enter new name...' }
+    );
+    if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
 
+    const cleanNewName = newName.trim();
     const parentDir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/')) : '';
-    const newPath = parentDir ? `${parentDir}/${newName.trim()}` : newName.trim();
+    const newPath = parentDir ? `${parentDir}/${cleanNewName}` : cleanNewName;
 
     try {
       await renameItem(oldPath, newPath);
       await loadWorkspace();
       setTabs(prev => prev.map(t => {
         if (t.path === oldPath) {
-          return { ...t, path: newPath, name: newName.trim() };
+          return { ...t, path: newPath, name: cleanNewName };
         }
         return t;
       }));
@@ -467,14 +631,19 @@ export default function App() {
         setActiveTabPath(newPath);
       }
     } catch (err) {
-      alert(`Rename failed: ${err.message}`);
+      showAlert(`Rename failed: ${err.message}`, 'Rename Error', 'danger');
     }
   };
 
   // Delete
   const handleDeleteItem = async (path, isDir) => {
     const name = path.split('/').pop();
-    if (!window.confirm(`Are you sure you want to delete ${isDir ? 'folder' : 'file'} "${name}"?`)) {
+    const confirmed = await showConfirm(
+      `Are you sure you want to delete ${isDir ? 'folder' : 'file'} "${name}"? This action cannot be undone.`,
+      `Delete ${isDir ? 'Folder' : 'File'}`,
+      { variant: 'danger', confirmText: 'Delete' }
+    );
+    if (!confirmed) {
       return;
     }
 
@@ -486,7 +655,7 @@ export default function App() {
         setActiveTabPath(null);
       }
     } catch (err) {
-      alert(`Delete failed: ${err.message}`);
+      showAlert(`Delete failed: ${err.message}`, 'Delete Error', 'danger');
     }
   };
 
@@ -590,6 +759,7 @@ export default function App() {
         theme={theme}
         onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
         onOpenSettings={() => setShowSettings(true)}
+        onStopServer={handleStopServer}
       />
 
       {/* Main Workspace Layout */}
@@ -667,6 +837,7 @@ export default function App() {
                 setSelectedPdfUrl(url);
                 setSelectedPdfName(name);
               }}
+              showAlert={showAlert}
             />
           </>
         )}
@@ -708,6 +879,58 @@ export default function App() {
         onUpdateSettings={setSettings}
         workspaceRoot={workspaceRoot}
       />
+
+      {/* Universal Custom Alert / Confirm / Prompt Modal */}
+      <CustomDialogModal
+        isOpen={dialogState.isOpen}
+        type={dialogState.type}
+        title={dialogState.title}
+        message={dialogState.message}
+        defaultValue={dialogState.defaultValue}
+        placeholder={dialogState.placeholder}
+        confirmText={dialogState.confirmText}
+        cancelText={dialogState.cancelText}
+        variant={dialogState.variant}
+        onConfirm={handleDialogConfirm}
+        onCancel={handleDialogCancel}
+      />
+
+      {/* Graceful Server Shutdown Screen */}
+      {serverStopped && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(10, 14, 20, 0.96)',
+          zIndex: 999999,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '24px'
+        }}>
+          <div style={{
+            background: '#161b22',
+            border: '1px solid #30363d',
+            borderRadius: '14px',
+            padding: '36px',
+            maxWidth: '460px',
+            textAlign: 'center',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
+          }}>
+            <div style={{ fontSize: '42px', marginBottom: '14px' }}>🛑</div>
+            <h2 style={{ color: '#ef4444', margin: '0 0 10px 0', fontSize: '20px' }}>Server Stopped</h2>
+            <p style={{ color: '#94a3b8', fontSize: '14px', lineHeight: '1.6', margin: '0 0 16px 0' }}>
+              The Local Compiler background server has been safely shut down.
+            </p>
+            <p style={{ color: '#64748b', fontSize: '13px', margin: 0 }}>
+              You can close this window now. Whenever you want to code again, simply double-click the <strong>Local Compiler</strong> shortcut on your desktop!
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

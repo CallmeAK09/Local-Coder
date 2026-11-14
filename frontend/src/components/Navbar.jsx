@@ -15,7 +15,8 @@ import {
   Code2,
   FolderTree,
   Terminal,
-  BookOpen
+  BookOpen,
+  Power
 } from 'lucide-react';
 
 export default function Navbar({
@@ -38,7 +39,8 @@ export default function Navbar({
   onOpenDependencies,
   theme,
   onToggleTheme,
-  onOpenSettings
+  onOpenSettings,
+  onStopServer
 }) {
   const allDepsReady = dependenciesStatus?.all_ready;
   const readyCount = dependenciesStatus?.dependencies?.filter(d => d.installed).length || 0;
@@ -171,6 +173,16 @@ export default function Navbar({
         {/* Settings */}
         <button className="btn btn-icon" title="IDE Preferences" onClick={onOpenSettings}>
           <Settings size={17} />
+        </button>
+
+        {/* Stop Server / Shutdown */}
+        <button 
+          className="btn btn-icon" 
+          title="Stop Compiler Server (Shutdown)" 
+          onClick={onStopServer}
+          style={{ color: '#ef4444' }}
+        >
+          <Power size={17} />
         </button>
       </div>
     </header>

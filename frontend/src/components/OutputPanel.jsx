@@ -56,7 +56,8 @@ export default function OutputPanel({
   previewRefreshTrigger = 0,
   selectedPdfUrl = null,
   selectedPdfName = '',
-  onSelectPdf = null
+  onSelectPdf = null,
+  showAlert
 }) {
   const [internalTab, setInternalTab] = useState('output');
   const activeTab = controlledActiveTab !== undefined ? controlledActiveTab : internalTab;
@@ -85,7 +86,7 @@ export default function OutputPanel({
 
   const handlePdfUpload = (file) => {
     if (!file || file.type !== 'application/pdf') {
-      alert('Please choose a valid PDF (.pdf) file.');
+      showAlert?.('Please choose a valid PDF (.pdf) file.', 'Invalid File Format', 'warning');
       return;
     }
 

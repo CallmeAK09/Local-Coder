@@ -31,7 +31,8 @@ export default function BrowserReaderPanel({
   onClose,
   initialPdfUrl = null,
   initialPdfName = '',
-  onSavePdfToWorkspace
+  onSavePdfToWorkspace,
+  showAlert
 }) {
   const [activeTab, setActiveTab] = useState('pdf'); // 'pdf' | 'browser'
   
@@ -90,7 +91,7 @@ export default function BrowserReaderPanel({
   // Handle local PDF upload from laptop
   const handlePdfFile = (file) => {
     if (!file || file.type !== 'application/pdf') {
-      alert('Please select a valid PDF (.pdf) file.');
+      showAlert?.('Please select a valid PDF (.pdf) file.', 'Invalid File Format', 'warning');
       return;
     }
 

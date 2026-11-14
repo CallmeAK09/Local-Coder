@@ -248,6 +248,61 @@ python3 manage.py runserver 127.0.0.1:8000
 
 ---
 
+## 🚀 Quick Start & PWA Installation
+
+**LOCAL CODER** is designed with a **server-driven PWA workflow**. There is no need for extra batch files, launcher clutter, or manual terminal management.
+
+### Step 1: Clone the Repository
+```bash
+git clone https://github.com/your-username/local-coder.git
+cd local-coder
+```
+
+### Step 2: Run the Local Server (First Time Setup)
+```bash
+./run.sh
+```
+`./run.sh` automatically:
+- Creates and activates the Python virtual environment (`venv`).
+- Installs backend dependencies (`django`, `djangorestframework`, `django-cors-headers`).
+- Runs database migrations.
+- Builds the production offline frontend assets.
+- Starts the server at `http://127.0.0.1:8000`.
+
+### Step 3: Install the PWA from Your Browser
+1. Open **`http://localhost:8000`** in **Google Chrome** or **Microsoft Edge**.
+2. Look for the **Install** button in the browser address bar (or click **Menu `⋮` &rarr; Save and share &rarr; Install Local Compiler**).
+3. Click **Install**.
+
+Chrome will create a native **Local Compiler** desktop application shortcut and register it in your system application menu.
+
+---
+
+## ⚡ Zero-Terminal Daily Usage (Auto-Start & Auto-Shutdown)
+
+Once the PWA is installed, you **never need to open a terminal or navigate directories again**:
+
+1. **Click to Open:**
+   - Double-click the **Local Compiler** PWA icon on your Desktop or App Launcher.
+   - The launcher automatically activates the virtual environment, verifies/starts the server in the background, and opens the standalone IDE window.
+2. **Close to Stop:**
+   - When you close the PWA window or tab, the built-in lifecycle watchdog detects that all sessions are closed and **automatically shuts down the background server within 6 seconds**, freeing port 8000 and system resources.
+   - You can also click the red **Power** icon in the app navbar anytime to shut down immediately.
+3. **Automated 100-Line Log Rotation:**
+   - Server logs (`backend/server.log`) are piped through an active circular buffer strictly capped at **100 lines**. Old logs are automatically purged so the log never grows indefinitely.
+
+---
+
+## 💻 Rebuilding Frontend (Optional)
+If you modify source code in `frontend/`:
+```bash
+cd frontend
+npm run build
+```
+The PWA service worker and Django backend immediately pick up the updated production build.
+
+---
+
 ## 📂 Project Structure
 
 ```
@@ -257,30 +312,17 @@ Local Coder/
 │   │   ├── workspace_manager/         # Filesystem operations, traversal guard & preview
 │   │   ├── execution_manager/         # Subprocess runner, process kill & SQLite logging
 │   │   └── dependency_manager/        # Host compiler probing & OS installation guides
-│   ├── config/                        # Settings, URL router & browser gateway proxy
+│   ├── config/                        # Settings, URL router, PWA lifecycle & gateway proxy
+│   ├── log_manager.py                 # Unbuffered 100-line circular log rotator
 │   ├── db.sqlite3                     # SQLite execution telemetry store
-│   └── manage.py                      # Django CLI with automatic virtualenv detection
-├── frontend/                          # React 19 + Vite Frontend
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Navbar.jsx             # Top bar with neon branding & tools
-│   │   │   ├── EditorPanel.jsx        # Center Monaco editor with smart indentation
-│   │   │   ├── FileExplorer.jsx       # Workspace navigation tree
-│   │   │   ├── OutputPanel.jsx        # Unified Output, Terminal, PDF, Browser & Preview
-│   │   │   ├── PreviewPanel.jsx       # Responsive HTML & Markdown preview
-│   │   │   ├── NewFileModal.jsx       # Floating file creator with compiler filtering
-│   │   │   ├── NewFolderModal.jsx     # Floating folder creator
-│   │   │   ├── DependencyModal.jsx    # Compiler inspection & installation guides
-│   │   │   └── SettingsModal.jsx      # Preferences & editor settings
-│   │   ├── services/api.js            # REST API client & proxy router
-│   │   ├── monacoConfig.js            # Offline Monaco worker loader
-│   │   ├── App.jsx                    # State coordinator & unified split layout
-│   │   └── index.css                  # Responsive dark/light theme stylesheet
-│   └── dist/                          # Production offline assets (Zero CDN)
-├── workspace/                         # User-isolated workspace directory
-├── run.sh                             # Single-command launcher
-├── start_dev.sh                       # Concurrent development launcher
-└── README.md                          # Documentation
+│   └── manage.py                      # Django CLI
+├── frontend/                          # React 19 + Vite Frontend (Bundled Monaco Editor)
+│   ├── src/                           # Components, editor hooks & UI layout
+│   └── dist/                          # Bundled offline assets & PWA Service Worker (Zero CDN)
+├── workspace/                         # Isolated user coding workspace
+├── run.sh                             # Single universal runner & PWA desktop launcher
+├── LICENSE                            # MIT License
+└── README.md                          # Comprehensive documentation
 ```
 
 ---

@@ -124,4 +124,14 @@ export function getOfflineDocsUrl(topic = 'python') {
   return `${API_BASE}/browser/docs/?topic=${encodeURIComponent(topic)}`;
 }
 
+export async function stopServer() {
+  const res = await fetch(`${API_BASE}/server/stop/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) throw new Error('Failed to stop server.');
+  return await res.json();
+}
+
+
 
