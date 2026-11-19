@@ -23,7 +23,8 @@ import {
   Plus,
   X,
   Compass,
-  FileCode
+  FileCode,
+  ListPlus
 } from 'lucide-react';
 import PreviewPanel from './PreviewPanel';
 import { getBrowserProxyUrl, getOfflineDocsUrl } from '../services/api';
@@ -43,6 +44,7 @@ export default function OutputPanel({
   executionResult,
   isRunning,
   stdinValue,
+  sessionStdin = [],
   onStdinChange,
   onSendStdin,
   history = [],
@@ -71,6 +73,18 @@ export default function OutputPanel({
   };
 
   // PDF Reader internal state
+  const [isMultilineStdin, setIsMultilineStdin] = useState(false);
+  const stdinInputRef = useRef(null);
+
+  const handleStdinChange = (val) => {
+    if (val && val.includes('\n') && !isMultilineStdin) {
+      setIsMultilineStdin(true);
+    }
+    if (onStdinChange) {
+      onStdinChange(val);
+    }
+  };
+
   const [pdfUrl, setPdfUrl] = useState(selectedPdfUrl);
   const [pdfName, setPdfName] = useState(selectedPdfName);
   const [pdfSize, setPdfSize] = useState(null);
@@ -191,8 +205,75 @@ export default function OutputPanel({
     setBookmarks(prev => prev.filter(b => b.id !== id));
   };
 
-  const status = isRunning ? 'RUNNING' : (executionResult?.status || 'IDLE');
-  const hasProblems = executionResult?.compilation_error || (executionResult?.status === 'ERROR' && executionResult?.stderr);
+  const isEofOrInputRequired = Boolean(
+    executionResult?.is_input_required ||
+    executionResult?.status === 'INPUT_REQUIRED' ||
+    (executionResult?.stderr && (
+      executionResult.stderr.includes('EOFError') ||
+      executionResult.stderr.includes('EOF when reading a line')
+    ))
+  );
+
+  useEffect(() => {
+    if (isEofOrInputRequired && stdinInputRef.current) {
+      stdinInputRef.current.focus();
+    }
+  }, [isEofOrInputRequired, executionResult]);
+
+  const status = isRunning ? 'RUNNING' : (
+    isEofOrInputRequired ? 'INPUT_REQUIRED' : (executionResult?.status || 'IDLE')
+  );
+  const hasProblems = Boolean(
+    executionResult?.compilation_error || 
+    (executionResult?.status === 'ERROR' && executionResult?.stderr) ||
+    isEofOrInputRequired
+  );
+
+  const renderInputRequiredBanner = () => {
+    if (!isEofOrInputRequired) return null;
+    const nextInputIndex = (sessionStdin?.length || 0) + 1;
+    return (
+      <div className="terminal-input-banner">
+        <div className="terminal-input-banner-icon">⌨️</div>
+        <div className="terminal-input-banner-body">
+          <div className="terminal-input-banner-title">
+            Program is waiting for input {sessionStdin?.length ? `(Input #${nextInputIndex})` : ''}
+          </div>
+          <div className="terminal-input-banner-subtitle">
+            {sessionStdin && sessionStdin.length > 0 && (
+              <div style={{ marginBottom: '5px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Entered so far:</span>
+                {sessionStdin.map((item, idx) => (
+                  <span key={idx} style={{ 
+                    background: 'rgba(56, 189, 248, 0.15)', 
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                    color: '#38bdf8',
+                    padding: '1px 6px', 
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    fontFamily: 'monospace'
+                  }}>
+                    #{idx + 1}: {item === '' ? '""' : item}
+                  </span>
+                ))}
+              </div>
+            )}
+            Please enter input #{nextInputIndex} in the input box below and click <strong>Run</strong> (or press Enter).
+          </div>
+        </div>
+        <button 
+          type="button" 
+          className="btn btn-primary"
+          style={{ padding: '4px 10px', fontSize: '11px', whiteSpace: 'nowrap' }}
+          onClick={() => {
+            if (stdinInputRef.current) stdinInputRef.current.focus();
+          }}
+        >
+          Enter Input #{nextInputIndex} ↓
+        </button>
+      </div>
+    );
+  };
 
   if (isCollapsed) {
     return (
@@ -345,6 +426,8 @@ export default function OutputPanel({
         {/* Tab 1: Output */}
         {activeTab === 'output' && (
           <div className="panel-content">
+            {renderInputRequiredBanner()}
+
             {isRunning && (
               <div style={{ color: 'var(--accent)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span className="spinner">⏳</span>
@@ -365,7 +448,29 @@ export default function OutputPanel({
               </div>
             )}
 
-            {executionResult?.stderr && (
+            {isEofOrInputRequired && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                margin: '6px 0',
+                padding: '4px 8px',
+                background: 'rgba(56, 189, 248, 0.08)',
+                borderRadius: '4px',
+                borderLeft: '2px solid var(--accent)',
+                fontFamily: 'var(--font-code)',
+                fontSize: '12px',
+                color: '#38bdf8'
+              }}>
+                <span style={{ fontWeight: 700 }}>❯</span>
+                <span className="blink-cursor">_</span>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>
+                  (Waiting for input #{sessionStdin.length + 1})
+                </span>
+              </div>
+            )}
+
+            {!isEofOrInputRequired && executionResult?.stderr && (
               <div className="stream-stderr">
                 <pre>{executionResult.stderr}</pre>
               </div>
@@ -383,14 +488,37 @@ export default function OutputPanel({
         {/* Tab 2: Terminal */}
         {activeTab === 'terminal' && (
           <div className="panel-content">
+            {renderInputRequiredBanner()}
+
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>
-              Standard input is piped directly into the running program. Use the bottom bar to send stdin commands.
+              Standard input is piped into the running program. If your code calls <code>input()</code>, enter inputs below (click the <strong>Lines</strong> icon for multiple inputs).
             </div>
 
             {executionResult ? (
               <div>
                 {executionResult.stdout && <pre className="terminal-stdout">{executionResult.stdout}</pre>}
-                {executionResult.stderr && <pre className="terminal-stderr">{executionResult.stderr}</pre>}
+                {isEofOrInputRequired && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    margin: '6px 0',
+                    padding: '4px 8px',
+                    background: 'rgba(56, 189, 248, 0.08)',
+                    borderRadius: '4px',
+                    borderLeft: '2px solid var(--accent)',
+                    fontFamily: 'var(--font-code)',
+                    fontSize: '12px',
+                    color: '#38bdf8'
+                  }}>
+                    <span style={{ fontWeight: 700 }}>❯</span>
+                    <span className="blink-cursor">_</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>
+                      (Waiting for input #{sessionStdin.length + 1})
+                    </span>
+                  </div>
+                )}
+                {!isEofOrInputRequired && executionResult.stderr && <pre className="terminal-stderr">{executionResult.stderr}</pre>}
               </div>
             ) : (
               <div className="empty-state">
@@ -415,8 +543,15 @@ export default function OutputPanel({
                   <XCircle size={16} color="var(--danger)" />
                   <div>
                     <div style={{ fontWeight: 600, color: 'var(--danger)' }}>
-                      Execution Error (Exit code: {executionResult?.exit_code})
+                      {isEofOrInputRequired 
+                        ? 'Input Required (EOF Encountered)' 
+                        : `Execution Error (Exit code: ${executionResult?.exit_code})`}
                     </div>
+                    {isEofOrInputRequired && (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px', marginBottom: '6px' }}>
+                        The program called <code>input()</code> or read from standard input, but no input was provided. Enter inputs into the input box below and re-run.
+                      </div>
+                    )}
                     <pre style={{ margin: '4px 0 0 0', color: 'var(--text-main)', fontSize: '12px' }}>
                       {executionResult?.compilation_error || executionResult?.stderr}
                     </pre>
@@ -749,29 +884,78 @@ export default function OutputPanel({
 
       {/* Stdin Input Bar at Bottom (Active for Output, Terminal, Problems, History) */}
       {(activeTab === 'output' || activeTab === 'terminal' || activeTab === 'problems' || activeTab === 'history') && (
-        <div className="stdin-bar">
-          <span style={{ color: 'var(--accent)', fontWeight: 700, alignSelf: 'center' }}>&gt;</span>
-          <input
-            type="text"
-            className="stdin-input"
-            placeholder="Stdin input (press Enter or Run)..."
-            value={stdinValue}
-            onChange={(e) => onStdinChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                onSendStdin();
-              }
-            }}
-          />
-          <button 
-            className="btn btn-primary" 
-            onClick={onSendStdin} 
-            title="Send Stdin &amp; Execute"
-            disabled={isRunning}
-          >
-            <Play size={12} fill="currentColor" />
-            <span>Run</span>
-          </button>
+        <div 
+          className={`stdin-bar ${isEofOrInputRequired ? 'needs-input' : ''}`} 
+          style={{ 
+            flexDirection: isMultilineStdin ? 'column' : 'row', 
+            alignItems: isMultilineStdin ? 'stretch' : 'center', 
+            gap: '8px' 
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: isMultilineStdin ? 'flex-start' : 'center', gap: '8px', flex: 1 }}>
+            <span style={{ color: 'var(--accent)', fontWeight: 700, paddingTop: isMultilineStdin ? '8px' : '0' }}>&gt;</span>
+            {!isMultilineStdin ? (
+              <input
+                ref={stdinInputRef}
+                type="text"
+                className={`stdin-input ${isEofOrInputRequired ? 'needs-input' : ''}`}
+                placeholder={isEofOrInputRequired ? `Program waiting for input #${(sessionStdin?.length || 0) + 1}! Type here and press Enter...` : "Stdin input (type here, or click ☰ for multiple lines)..."}
+                value={stdinValue}
+                onChange={(e) => handleStdinChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    onSendStdin();
+                  }
+                }}
+              />
+            ) : (
+              <textarea
+                ref={stdinInputRef}
+                className={`stdin-input ${isEofOrInputRequired ? 'needs-input' : ''}`}
+                rows={4}
+                style={{
+                  height: '96px',
+                  resize: 'vertical',
+                  fontFamily: 'monospace',
+                  fontSize: '13px',
+                  lineHeight: '1.4',
+                  padding: '10px 12px'
+                }}
+                placeholder={isEofOrInputRequired ? `Program waiting for input #${(sessionStdin?.length || 0) + 1}! Enter lines and press Ctrl+Enter to Run...` : "Stdin inputs (one line per input() prompt; press Ctrl+Enter to Run)..."}
+                value={stdinValue}
+                onChange={(e) => handleStdinChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    onSendStdin();
+                  }
+                }}
+              />
+            )}
+            
+            <button
+              type="button"
+              className="tree-action-btn"
+              title={isMultilineStdin ? "Switch to single-line input" : "Switch to multi-line input (for multiple input() calls)"}
+              onClick={() => setIsMultilineStdin(prev => !prev)}
+              style={isMultilineStdin ? { color: 'var(--accent)', background: 'var(--bg-tertiary)' } : {}}
+            >
+              <ListPlus size={16} />
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: isMultilineStdin ? 'flex-end' : 'flex-start', gap: '6px' }}>
+            <button 
+              className={`btn ${isEofOrInputRequired ? 'btn-primary pulse-btn' : 'btn-primary'}`} 
+              onClick={onSendStdin} 
+              title={isMultilineStdin ? "Send All Lines & Execute (Ctrl+Enter)" : "Send Stdin & Execute (Enter)"}
+              disabled={isRunning}
+              style={{ minHeight: isMultilineStdin ? '34px' : '44px', padding: '0 16px' }}
+            >
+              <Play size={13} fill="currentColor" />
+              <span>{isMultilineStdin ? "Run with Inputs" : (isEofOrInputRequired ? `Send Input #${(sessionStdin?.length || 0) + 1}` : "Run")}</span>
+            </button>
+          </div>
         </div>
       )}
     </aside>

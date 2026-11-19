@@ -96,6 +96,7 @@ export default function App() {
   const [activeExecId, setActiveExecId] = useState(null);
   const [executionResult, setExecutionResult] = useState(null);
   const [stdinValue, setStdinValue] = useState('');
+  const [sessionStdin, setSessionStdin] = useState([]);
   const [executionHistory, setExecutionHistory] = useState([]);
 
   // State: Dependencies
@@ -457,7 +458,7 @@ export default function App() {
   };
 
   // Run Active File (Auto-saves file immediately before execution)
-  const handleRun = async (overrideStdin = null) => {
+  const handleRun = async (overrideStdin = null, isContinueSession = false) => {
     if (!activeTab) {
       showAlert('Please select or create a file to execute.', 'No File Selected', 'warning');
       return;
@@ -514,10 +515,32 @@ export default function App() {
     setIsRunning(true);
 
     try {
-      const inputToSend = overrideStdin !== null ? overrideStdin : stdinValue;
+      let currentSession = [];
+      const rawInput = overrideStdin !== null ? overrideStdin : stdinValue;
+
+      if (isContinueSession) {
+        const newInputs = rawInput !== undefined && rawInput !== null 
+          ? String(rawInput).split('\n') 
+          : [''];
+        currentSession = [...sessionStdin, ...newInputs];
+      } else {
+        if (rawInput) {
+          currentSession = String(rawInput).split('\n');
+        } else {
+          currentSession = [];
+        }
+      }
+
+      setSessionStdin(currentSession);
+      setStdinValue('');
+
+      const formattedStdin = currentSession.length > 0 
+        ? currentSession.join('\n') + '\n' 
+        : '';
+
       const res = await executeCode({
         path: activeTab.path,
-        stdin: inputToSend,
+        stdin: formattedStdin,
         timeout: settings.timeout || 20,
         exec_id: execId,
         content: activeTab.content
@@ -525,8 +548,23 @@ export default function App() {
 
       setTabs(prev => prev.map(t => t.path === activeTab.path ? { ...t, isDirty: false } : t));
       setExecutionResult(res);
+
+      const isInputStillRequired = Boolean(
+        res?.is_input_required ||
+        res?.status === 'INPUT_REQUIRED' ||
+        (res?.stderr && (
+          res.stderr.includes('EOFError') ||
+          res.stderr.includes('EOF when reading a line')
+        ))
+      );
+
+      if (!isInputStillRequired) {
+        setSessionStdin([]);
+      }
+
       loadHistory();
     } catch (err) {
+      setSessionStdin([]);
       setExecutionResult({
         status: 'ERROR',
         exit_code: 1,
@@ -547,6 +585,7 @@ export default function App() {
     try {
       await stopExecution(activeExecId);
       setIsRunning(false);
+      setSessionStdin([]);
       setExecutionResult(prev => ({
         ...prev,
         status: 'TERMINATED',
@@ -558,7 +597,17 @@ export default function App() {
   };
 
   const handleSendStdin = () => {
-    handleRun(stdinValue);
+    const inputToSend = stdinValue;
+    setStdinValue('');
+    const isWaitingForInput = Boolean(
+      executionResult?.is_input_required ||
+      executionResult?.status === 'INPUT_REQUIRED' ||
+      (executionResult?.stderr && (
+        executionResult.stderr.includes('EOFError') ||
+        executionResult.stderr.includes('EOF when reading a line')
+      ))
+    );
+    handleRun(inputToSend, isWaitingForInput);
   };
 
   // Open Floating New File Form
@@ -662,6 +711,7 @@ export default function App() {
   // Clear Output
   const handleClearOutput = () => {
     setExecutionResult(null);
+    setSessionStdin([]);
   };
 
   // Keyboard Shortcuts (Ctrl+S / F5 / Ctrl+Enter)
@@ -808,6 +858,7 @@ export default function App() {
               executionResult={executionResult}
               isRunning={isRunning}
               stdinValue={stdinValue}
+              sessionStdin={sessionStdin}
               onStdinChange={setStdinValue}
               onSendStdin={handleSendStdin}
               history={executionHistory}

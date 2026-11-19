@@ -126,6 +126,14 @@ def browser_proxy_view(request):
     if not parsed.netloc:
         return HttpResponse("<h3 style='color:#e2e8f0;font-family:sans-serif;'>Invalid URL specified.</h3>", status=400, content_type='text/html')
 
+    # Security: enforce HTTP/HTTPS schemes only and block cloud metadata SSRF
+    if parsed.scheme not in ('http', 'https'):
+        return HttpResponse("<h3 style='color:#e2e8f0;font-family:sans-serif;'>Security error: Only HTTP and HTTPS URLs are permitted.</h3>", status=403, content_type='text/html')
+
+    hostname = (parsed.hostname or '').lower()
+    if hostname in ('169.254.169.254', 'metadata.google.internal', 'instance-data'):
+        return HttpResponse("<h3 style='color:#e2e8f0;font-family:sans-serif;'>Security error: Access to internal metadata services is blocked.</h3>", status=403, content_type='text/html')
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',

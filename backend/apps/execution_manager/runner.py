@@ -106,7 +106,22 @@ def execute_code(
                 'compilation_error': '',
                 'execution_time_ms': 0
             }
-        run_cmd = [py_bin, '-u', str(file_path)]
+        wrapper_code = (
+            "import builtins, sys\n"
+            "if sys.path and sys.path[0] != '': sys.path.insert(0, '')\n"
+            "_orig_input = builtins.input\n"
+            "def _echo_input(prompt=''):\n"
+            "    val = _orig_input(prompt)\n"
+            "    sys.stdout.write(val + '\\n')\n"
+            "    sys.stdout.flush()\n"
+            "    return val\n"
+            "builtins.input = _echo_input\n"
+            "sys.argv = sys.argv[1:]\n"
+            "with open(sys.argv[0], 'rb') as _f:\n"
+            "    _code = compile(_f.read(), sys.argv[0], 'exec')\n"
+            "exec(_code, {'__name__': '__main__', '__file__': sys.argv[0], '__builtins__': builtins})\n"
+        )
+        run_cmd = [py_bin, '-u', '-c', wrapper_code, str(file_path)]
 
     elif lang == 'javascript':
         node_bin = shutil.which('node')
@@ -227,6 +242,17 @@ def execute_code(
         # Pre-exec fn to create a new session/process group for clean killing on posix
         preexec = os.setsid if hasattr(os, 'setsid') else None
 
+        # Security: sanitized execution environment
+        exec_env = os.environ.copy()
+        for dangerous_key in ['LD_PRELOAD', 'LD_LIBRARY_PATH', 'PYTHONSTARTUP']:
+            exec_env.pop(dangerous_key, None)
+        exec_env['PYTHONUNBUFFERED'] = '1'
+
+        # Ensure non-empty stdin ends with newline for line-based input readers
+        formatted_stdin = stdin_data or ""
+        if formatted_stdin and not formatted_stdin.endswith('\n'):
+            formatted_stdin += '\n'
+
         proc = subprocess.Popen(
             run_cmd,
             cwd=str(cwd),
@@ -235,6 +261,7 @@ def execute_code(
             stderr=subprocess.PIPE,
             text=True,
             shell=False,
+            env=exec_env,
             preexec_fn=preexec
         )
 
@@ -242,7 +269,7 @@ def execute_code(
             register_process(exec_id, proc, temp_files_to_clean)
 
         stdout_data, stderr_data = proc.communicate(
-            input=stdin_data if stdin_data else None,
+            input=formatted_stdin if formatted_stdin else None,
             timeout=timeout_sec
         )
         elapsed_ms = round((time.time() - run_start) * 1000, 2)
@@ -254,12 +281,14 @@ def execute_code(
             if entry and entry.get('stopped'):
                 stopped = True
 
-        status = 'TERMINATED' if stopped else ('SUCCESS' if exit_code == 0 else 'ERROR')
+        is_eof = bool(stderr_data and ('EOFError' in stderr_data or 'EOF when reading a line' in stderr_data))
+        status = 'TERMINATED' if stopped else ('SUCCESS' if exit_code == 0 else ('INPUT_REQUIRED' if is_eof else 'ERROR'))
 
         clean_temp_files(temp_files_to_clean)
         return {
             'status': status,
             'exit_code': exit_code,
+            'is_input_required': is_eof,
             'stdout': truncate_output(stdout_data or ''),
             'stderr': truncate_output(stderr_data or ''),
             'compilation_error': '',
